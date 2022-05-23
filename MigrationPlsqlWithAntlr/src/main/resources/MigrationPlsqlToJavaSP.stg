@@ -1,0 +1,107 @@
+javaTypeInitMap ::= [
+	"int":"0",
+	"long":"0",
+	"float":"0.0f",
+	"double":"0.0",
+	"boolean":"false",
+	"byte":"0",
+	"short":"0",
+	"char":"0",
+	"BigDecimal":"new BigDecimal()",
+	default:"null" // anything other than a primitive type is an object
+]
+
+initValue(typeName) ::= <<
+<javaTypeInitMap.(typeName)>
+>>
+
+class(name, method) ::= <<
+import java.io.*;
+import java.util.*;
+import java.math.*;
+import java.sql.*;
+
+public class <name> {
+	<method>
+}
+>>
+
+method(name, origName, returnValue, returnType, parameters, variables, codeBlocks) ::= <<
+// CREATE OR REPLACE FUNCTION <origName>(<parameters:{parameter|<parameter.origName> <parameter.origType><parameter.precision>}; separator=", ">) RETURN <returnType.origType><returnType.precision>
+// AS LANGUAGE JAVA NAME '<name>.exec<name>(<parameters:{parameter|<parameter.class>}; separator=", ">) return <returnType.class>';
+public static <returnType.type> exec<name> (<parameters:{parameter|<parameter.type> <parameter.name>}; separator=", ">) {
+	<variables:{variable|<variable.type> <variable.name> = <initValue(variable.type)>;}; separator="\n">
+
+	<codeBlocks:{codeBlock|<codeBlock>}; separator="\n\n">
+
+	return <returnValue>;
+}
+>>
+
+try(resource, codeBlocks, exceptions) ::= <<
+try <if(resource)>(<resource>) <endif>{
+	<codeBlocks:{codeBlock|<codeBlock>}; separator="\n">
+}
+<if(exceptions)>
+<exceptions:{exception|<exception>}; separator="\n">
+<endif>
+>>
+
+exception(error, reference, codeBlocks) ::= <<
+catch (<error> <if(reference)><reference><else>e<endif>) {
+	<reference>.printStackTrace();
+	<if(codeBlocks)><codeBlocks:{codeBlock|<codeBlock>}; separator="\n"><endif>
+}
+>>
+
+classForName() ::= <<
+try {
+	Class.forName("cubrid.jdbc.driver.CUBRIDDriver");
+} catch (ClassNotFoundException e) {
+	e.printStackTrace();
+}
+>>
+
+defaultConnection(codeBlocks) ::= <<
+<classForName()>
+
+try (Connection connection = DriverManager.getConnection("jdbc:default:connection:");) {
+	connection.setAutoCommit(false);
+
+	StringJoiner sql = null;
+
+	<codeBlocks:{codeBlock|<codeBlock>}; separator="\n\n">
+
+	connection.commit();
+} catch (SQLException e) {
+	e.printStackTrace();
+}
+>>
+
+executeQuery(query, bindVariables, intoVariables, codeBlocks) ::= <<
+sql = new StringJoiner(" ");
+sql.add("<query.sql>");
+
+try (PreparedStatement preparedStatement = connection.prepareStatement(sql.toString());) {
+	<if(bindVariables)>
+	{
+		int i = 0;
+		<bindVariables:{bindVariable|preparedStatement.set<bindVariable.type; format="cap">(++i, <bindVariable.name>);}; separator="\n">
+	}
+	<endif>
+
+	try (ResultSet resultSet = preparedStatement.executeQuery();) {
+		int i = 0;
+		while (resultSet.next()) {
+			<if(intoVariables)>
+			<intoVariables:{intoVariable|<intoVariable.name> = resultSet.get<intoVariable.type; format="cap">(++i);}; separator="\n">
+			<endif>
+		}
+	}
+}
+catch (SQLException e) {
+	e.printStackTrace();
+	connection.rollback();
+	throw e;
+}
+>>
